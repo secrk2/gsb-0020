@@ -18,7 +18,8 @@ public record ObjectView(Long id, String correctionNo, String maskedName, String
                          Instant lastLocationAt, Boolean lastInsideFence, Boolean lastForbidden,
                          Double lastLat, Double lastLng,
                          Integer lastBattery, Integer lastSignal, Boolean lastWorn,
-                         Double fenceCenterLat, Double fenceCenterLng, Integer fenceRadiusMeters) {
+                         Double fenceCenterLat, Double fenceCenterLng, Integer fenceRadiusMeters,
+                         String releaseCertificateNo, Instant releasedMarkedAt, boolean locationFrozen) {
 
     public static ObjectView of(CorrectionObject o, boolean includeFullName) {
         return new ObjectView(
@@ -47,7 +48,10 @@ public record ObjectView(Long id, String correctionNo, String maskedName, String
                 o.getLastWorn(),
                 o.getOffice().getCenterLat(),
                 o.getOffice().getCenterLng(),
-                o.getOffice().getFenceRadiusMeters()
+                o.getOffice().getFenceRadiusMeters(),
+                o.getReleaseCertificateNo(),
+                o.getReleasedMarkedAt(),
+                o.isLocationFrozen()
         );
     }
 }

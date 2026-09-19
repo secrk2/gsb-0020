@@ -38,6 +38,10 @@ public class ViolationEvent {
     @Column(name = "read_flag", nullable = false)
     private Boolean readFlag = false;
 
+    /** 已被登记到的违规处置案件 id；null 表示尚未登记的原始预警 */
+    @Column(name = "case_id")
+    private Long caseId;
+
     public ViolationEvent() {
     }
 
@@ -57,4 +61,6 @@ public class ViolationEvent {
     public Instant getEventTime() { return eventTime; }
     public Boolean getReadFlag() { return readFlag; }
     public void setReadFlag(Boolean readFlag) { this.readFlag = readFlag; }
+    public Long getCaseId() { return caseId; }
+    public void setCaseId(Long caseId) { this.caseId = caseId; }
 }

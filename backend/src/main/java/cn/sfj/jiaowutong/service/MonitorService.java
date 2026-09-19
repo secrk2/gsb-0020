@@ -354,7 +354,7 @@ public class MonitorService {
 
     // ---------------- 在矫完成度（双口径） ----------------
 
-    private CompletionView buildCompletion(CorrectionObject o, ZoneId zone) {
+    CompletionView buildCompletion(CorrectionObject o, ZoneId zone) {
         // 与“月视图”一致取近 30 天（按对象时区的日历日）为统一窗口，两口径才可比；
         // 不用整个矫正期，否则打卡天数口径分母是自然日，数值恒低、失去区分度。
         LocalDate today = Instant.now().atZone(zone).toLocalDate();

@@ -17,12 +17,17 @@ public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
-    private static final Map<String, HttpStatus> STATUS_MAP = Map.of(
-            "FORBIDDEN", HttpStatus.FORBIDDEN,
-            "NOT_FOUND", HttpStatus.NOT_FOUND,
-            "INVALID_TRANSITION", HttpStatus.CONFLICT,
-            "STALE_LOCATION", HttpStatus.UNPROCESSABLE_ENTITY,
-            "VALIDATION_ERROR", HttpStatus.BAD_REQUEST
+    private static final Map<String, HttpStatus> STATUS_MAP = Map.ofEntries(
+            Map.entry("FORBIDDEN", HttpStatus.FORBIDDEN),
+            Map.entry("NOT_FOUND", HttpStatus.NOT_FOUND),
+            Map.entry("INVALID_TRANSITION", HttpStatus.CONFLICT),
+            Map.entry("INVALID_ACTION", HttpStatus.CONFLICT),
+            Map.entry("ALREADY_REGISTERED", HttpStatus.CONFLICT),
+            Map.entry("ASSESSMENT_EXISTS", HttpStatus.CONFLICT),
+            Map.entry("OPEN_CASE_EXISTS", HttpStatus.CONFLICT),
+            Map.entry("STALE_LOCATION", HttpStatus.UNPROCESSABLE_ENTITY),
+            Map.entry("LOCATION_UPDATES_CLOSED", HttpStatus.UNPROCESSABLE_ENTITY),
+            Map.entry("VALIDATION_ERROR", HttpStatus.BAD_REQUEST)
     );
 
     @ExceptionHandler(ApiException.class)

@@ -19,7 +19,10 @@ import java.util.*;
  * - 各司法所在矫漏斗（入矫登记 / 在矫 / 请假外出 / 训诫 / 收监 / 解除）；
  * - 今日应报到：按对象所属司法所时区取“今天/星期”，并按该时区 18:00 判逾时——
  *   绝不用服务器或干警时区，跨时区对象否则会记错日子、白触发红点；
- * - 红点：未处置的越界/禁区/未报到/训诫事件，按数据范围过滤；事件时间为 UTC。
+ * - 逾时未报到自动落 ABSENT 预警（按对象时区当日去重，一天最多一条），
+ *   若该对象同类待处置案件在时间窗内则直接并入，不产生新红点；
+ * - 红点：未处置且未挂案件的越界/禁区/未报到/训诫事件，按数据范围过滤；
+ *   已解除/收监对象不再产生红点。事件时间为 UTC。
  */
 @Service
 public class DashboardService {
@@ -31,18 +34,24 @@ public class DashboardService {
     private final CorrectionObjectRepository objectRepository;
     private final CheckInRepository checkInRepository;
     private final ViolationEventRepository violationRepository;
+    private final ViolationCaseRepository caseRepository;
+    private final ViolationCaseService caseService;
 
     public DashboardService(JudicialOfficeRepository officeRepository,
                             CorrectionObjectRepository objectRepository,
                             CheckInRepository checkInRepository,
-                            ViolationEventRepository violationRepository) {
+                            ViolationEventRepository violationRepository,
+                            ViolationCaseRepository caseRepository,
+                            ViolationCaseService caseService) {
         this.officeRepository = officeRepository;
         this.objectRepository = objectRepository;
         this.checkInRepository = checkInRepository;
         this.violationRepository = violationRepository;
+        this.caseRepository = caseRepository;
+        this.caseService = caseService;
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public DashboardView build(LoginUser user) {
         Instant nowUtc = Instant.now();
 
@@ -118,6 +127,9 @@ public class DashboardService {
             // 逾时阈值也按对象时区墙钟：该时区今天 18:00 对应的 UTC 时刻
             Instant overdueAt = localToday.atTime(OVERDUE_AFTER).atZone(zone).toInstant();
             boolean overdue = !checked && nowUtc.isAfter(overdueAt);
+            if (overdue) {
+                materializeAbsentEvent(o, localToday, nowUtc);
+            }
             due.add(new DashboardView.DueTodayItem(
                     o.getId(), o.getCorrectionNo(), o.getMaskedName(),
                     o.getOffice().getName(), o.getOffice().getTimezone(), localToday.toString(),
@@ -125,16 +137,50 @@ public class DashboardService {
         }
         due.sort(Comparator.comparing(DashboardView.DueTodayItem::correctionNo));
 
-        // 红点：未处置事件，按范围过滤
+        // 红点：未处置、未挂案件事件；已解除/收监对象不出红点；按范围过滤
+        Map<Long, ViolationCase> caseMap = new HashMap<>();
         List<DashboardView.RedDotItem> redDots = violationRepository.findAll().stream()
-                .filter(v -> !v.getReadFlag())
+                .filter(v -> !v.getReadFlag() && v.getCaseId() == null)
+                .filter(v -> {
+                    CorrectionStatus st = v.getOffender().getStatus();
+                    return st != CorrectionStatus.RELEASED && st != CorrectionStatus.REIMPRISONED;
+                })
                 .filter(v -> scoped.stream().anyMatch(o -> o.getId().equals(v.getOffender().getId())))
                 .sorted(Comparator.comparing(ViolationEvent::getEventTime).reversed())
                 .limit(30)
-                .map(v -> ObjectService.toRedDot(v, v.getOffender()))
+                .map(v -> {
+                    ViolationCase c = v.getCaseId() == null ? null
+                            : caseMap.computeIfAbsent(v.getCaseId(),
+                                    id -> caseRepository.findById(id).orElse(null));
+                    return ObjectService.toRedDotWithCase(v, v.getOffender(),
+                            c == null ? null : c.getCaseNo(),
+                            c == null ? null : c.getStatus().name());
+                })
                 .toList();
 
         return new DashboardView(nowUtc.toString(), user.role().name(), globalFunnel,
                 officeFunnels, due, redDots, redDots.size());
+    }
+
+    /**
+     * 逾时未报到落预警：每个对象当地当日最多一条；
+     * 同类待处置案件仍在合并时间窗内时，直接并入案件不刷红点。
+     */
+    private void materializeAbsentEvent(CorrectionObject o, LocalDate localToday, Instant now) {
+        ZoneId zone = FenceService.safeZone(o.getOffice().getTimezone());
+        Instant dayStartUtc = localToday.atStartOfDay(zone).toInstant();
+        ViolationEvent existed = violationRepository
+                .findFirstByOffender_IdAndTypeAndEventTimeAfterOrderByEventTimeDesc(
+                        o.getId(), "ABSENT", dayStartUtc);
+        if (existed != null) {
+            return;
+        }
+        ViolationEvent event = new ViolationEvent(o, "ABSENT",
+                "对象 " + o.getMaskedName() + " 应于今日（" + localToday + " " + o.getOffice().getTimezone()
+                        + "）报到，截至当地 18:00 未报到", now);
+        ViolationCaseService.EventAttach attach = caseService.attachNewEvent(event);
+        if (attach != ViolationCaseService.EventAttach.SUPPRESSED) {
+            violationRepository.save(event);
+        }
     }
 }

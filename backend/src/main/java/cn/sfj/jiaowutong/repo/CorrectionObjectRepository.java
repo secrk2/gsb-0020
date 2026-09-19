@@ -5,8 +5,14 @@ import cn.sfj.jiaowutong.domain.CorrectionStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
+import java.util.Optional;
 
 public interface CorrectionObjectRepository extends JpaRepository<CorrectionObject, Long> {
+
+    Optional<CorrectionObject> findByCorrectionNo(String correctionNo);
+
+    /** 编号模糊检索（解除归档后仍可按编号查到档案） */
+    List<CorrectionObject> findByCorrectionNoContainingIgnoreCaseOrderByCorrectionNo(String keyword);
 
     List<CorrectionObject> findByOfficeIdOrderById(Long officeId);
 

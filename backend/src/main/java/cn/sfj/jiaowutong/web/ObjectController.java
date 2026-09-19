@@ -28,12 +28,15 @@ public class ObjectController {
         this.objectService = objectService;
     }
 
-    /** 档案列表：默认脱敏，支持状态/司法所过滤（监管员可切所） */
+    /** 档案列表：默认脱敏，支持状态/司法所/编号检索/仅在矫过滤（监管员可切所） */
     @GetMapping
     public ApiResult<List<ObjectView>> list(@RequestParam(required = false) CorrectionStatus status,
-                                            @RequestParam(required = false) Long officeId) {
+                                            @RequestParam(required = false) Long officeId,
+                                            @RequestParam(required = false) String keyword,
+                                            @RequestParam(required = false, defaultValue = "false")
+                                            boolean activeOnly) {
         LoginUser user = CurrentUserHolder.require();
-        return ApiResult.success(objectService.list(status, officeId, user));
+        return ApiResult.success(objectService.list(status, officeId, keyword, activeOnly, user));
     }
 
     /** 档案详情：越权访问返回 403 错误态，不返回空白 */

@@ -98,6 +98,24 @@
       el.style.cursor = 'pointer';
       el.onclick = () => { location.hash = '#/objects/' + el.dataset.objectId; };
     });
+    root.querySelectorAll('[data-goto]').forEach((el) => {
+      el.onclick = (e) => {
+        e.stopPropagation();
+        location.hash = '#/objects/' + el.dataset.goto;
+      };
+    });
+    root.querySelectorAll('[data-register]').forEach((el) => {
+      el.onclick = async (e) => {
+        e.stopPropagation();
+        const prefill = JSON.parse(el.dataset.register.replace(/&#39;/g, "'"));
+        if (typeof globalThis.__openViolationRegister !== 'function') {
+          globalThis.__pendingRegister = prefill;
+          location.hash = '#/violations';
+          return;
+        }
+        globalThis.__openViolationRegister(prefill);
+      };
+    });
   };
 
   function officeCard(o) {
@@ -145,11 +163,15 @@
   function redItem(v) {
     const icon = v.type === 'GEOFENCE_BREACH' ? '📍' : v.type === 'ABSENT' ? '🚨' : '⚠️';
     return `
-      <div class="violation-item" data-object-id="${v.objectId}">
+      <div class="violation-item">
         <span class="red-dot" style="margin-top:6px"></span>
         <div class="v-body">
           <div class="v-detail">${icon} <span class="badge red" style="margin-right:6px">${UI.esc(v.typeLabel)}</span>${UI.esc(v.detail)}</div>
           <div class="v-meta">${UI.esc(v.maskedName)} · ${UI.esc(v.correctionNo)} · ${UI.esc(v.officeName)} · ${UI.fmtTzFull(v.eventTime, v.timezone)}（${UI.esc(v.timezone)}）</div>
+          <div style="margin-top:5px;display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn sm primary" data-register='${JSON.stringify({ objectId: v.objectId, reasonType: v.type, eventId: v.id, detail: v.detail }).replace(/'/g, '&#39;')}'>📥 登记处置</button>
+            <button class="btn sm" data-goto="${v.objectId}">查看档案</button>
+          </div>
         </div>
       </div>`;
   }

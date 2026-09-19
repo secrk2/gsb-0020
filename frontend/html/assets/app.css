@@ -654,3 +654,25 @@ textarea.input { resize: vertical; min-height: 72px; }
   .cur-label { fill: #9ec5f4; }
   .opposite-warn { border-color: #5a4d22; }
 }
+
+/* ============================================================
+   违规处置 / 解除评估（列表与页签复用定位监控布局）
+   ============================================================ */
+.mon-meta { font-size: 11.5px; color: var(--ink-muted); margin-top: 3px; }
+.tab-strip { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.tab {
+  border: 1px solid var(--hairline); background: var(--surface-1); color: var(--ink-secondary);
+  border-radius: 999px; padding: 4px 12px; font-size: 12.5px; cursor: pointer;
+}
+.tab:hover { border-color: var(--brand-300); }
+.tab.active { background: var(--brand-600); border-color: var(--brand-600); color: #fff; }
+.case-seal {
+  border: 1px dashed var(--good); background: var(--good-bg); color: var(--good);
+  border-radius: var(--radius-sm); padding: 10px 12px; font-size: 13px; margin-top: 10px;
+}
+.case-seal b { letter-spacing: .5px; }
+@media (max-width: 1024px) {
+  .monitor-layout { grid-template-columns: 1fr; }
+  .monitor-list-card { position: static; }
+  .monitor-list { max-height: 320px; }
+}

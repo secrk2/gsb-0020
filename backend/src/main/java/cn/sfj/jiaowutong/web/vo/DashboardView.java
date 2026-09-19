@@ -32,6 +32,7 @@ public record DashboardView(
 
     public record RedDotItem(Long id, Long objectId, String correctionNo, String maskedName,
                              String officeName, String timezone, String type, String typeLabel,
-                             String detail, Instant eventTime, boolean read) {
+                             String detail, Instant eventTime, boolean read,
+                             Long caseId, String caseNo, String caseStatus) {
     }
 }

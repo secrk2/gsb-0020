@@ -137,14 +137,59 @@
               <div class="violation-list">
                 ${detail.violations.length ? detail.violations.map((v) => `
                   <div class="violation-item">
-                    <span class="red-dot" style="margin-top:6px"></span>
+                    <span class="red-dot" style="margin-top:6px;${v.read ? 'background:var(--neutral)' : ''}"></span>
                     <div class="v-body">
-                      <div class="v-detail"><span class="badge red" style="margin-right:6px">${UI.esc(v.typeLabel)}</span>${UI.esc(v.detail)}</div>
+                      <div class="v-detail"><span class="badge ${v.read ? 'gray' : 'red'}" style="margin-right:6px">${UI.esc(v.typeLabel)}${v.read ? '·已处置' : ''}</span>${UI.esc(v.detail)}</div>
                       <div class="v-meta">${UI.fmtTzFull(v.eventTime, o.timezone)}（${UI.esc(o.timezone)}）</div>
                     </div>
                   </div>`).join('')
                   : '<div style="color:var(--good);font-size:13px">暂无违规记录</div>'}
               </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">⚖️ 违规处置案件
+                <span class="sub">${detail.cases.length} 件</span>
+              </div>
+              <div class="violation-list">
+                ${detail.cases.length ? detail.cases.slice(0, 6).map((c) => `
+                  <div class="violation-item" data-case="${c.id}" style="cursor:pointer">
+                    <span style="margin-top:2px">⚖️</span>
+                    <div class="v-body">
+                      <div class="v-detail"><b>${UI.esc(c.caseNo)}</b>
+                        <span class="badge ${c.status === 'REGISTERED' ? 'red' : 'green'}" style="margin-left:6px">${UI.esc(c.statusLabel)}</span>
+                        <span class="badge gray" style="margin-left:4px">${UI.esc(c.reasonTypeLabel)}</span></div>
+                      <div class="v-meta">${UI.esc(c.registeredByName)} 登记 · ${UI.fmtTz(c.registeredAt, o.timezone)}
+                        ${c.mergedEventCount > 1 ? ' · 合并预警 ' + c.mergedEventCount + ' 条' : ''}</div>
+                    </div>
+                  </div>`).join('')
+                  : '<div style="color:var(--ink-muted);font-size:13px">暂无处置案件</div>'}
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">📭 解除与评估</div>
+              ${o.releaseCertificateNo ? `
+                <div class="case-seal">
+                  📜 <b>已解除社区矫正（永久标记）</b><br/>
+                  解除证明书编号：<b>${UI.esc(o.releaseCertificateNo)}</b><br/>
+                  解除时间：${UI.fmtTzFull(o.releasedMarkedAt, o.timezone)}（${UI.esc(o.timezone)}）<br/>
+                  定位数据已停止实时更新；本档案按矫正编号长期可查。
+                </div>` : ''}
+              ${detail.releaseAssessment ? (() => {
+                const a = detail.releaseAssessment;
+                return `
+                <div style="font-size:13px;line-height:1.9">
+                  <div>评估报告：<b>${UI.esc(a.reportNo)}</b>
+                    <span class="badge ${a.status === 'DONE' ? 'green' : a.status === 'REJECTED' ? 'red' : ''}" style="margin-left:6px">${UI.esc(a.statusLabel)}</span></div>
+                  <div style="color:var(--ink-muted)">期满日 ${UI.esc(a.dueDate)} · 结论：${UI.esc(a.conclusionLabel)} · ${UI.esc(a.generatedByName)} 生成</div>
+                  ${a.releaseCertificateNo ? `<div style="color:var(--good)">📜 ${UI.esc(a.releaseCertificateNo)}</div>` : ''}
+                </div>
+                <button class="btn sm primary" id="btn-release-link" style="margin-top:8px">查看评估流程</button>`;
+              })() : `
+                <div style="color:var(--ink-muted);font-size:13px;margin-bottom:8px">
+                  矫正期满前须先生成解除评估报告，经审批通过后执行解除。</div>
+                <button class="btn sm" id="btn-release-link">前往解除与评估</button>`}
             </div>
           </div>
         </div>`;
@@ -154,6 +199,21 @@
       root.querySelectorAll('[data-action]').forEach((btn) => {
         btn.onclick = () => onTransition(btn.dataset.action, btn.textContent.trim(),
           btn.dataset.needReason === 'true');
+      });
+      const releaseLink = root.querySelector('#btn-release-link');
+      if (releaseLink) {
+        releaseLink.onclick = () => {
+          if (detail.releaseAssessment) {
+            globalThis.__openReleaseAssessment = detail.releaseAssessment.id;
+          }
+          location.hash = '#/release';
+        };
+      }
+      root.querySelectorAll('[data-case]').forEach((el) => {
+        el.onclick = () => {
+          globalThis.__openViolationCase = Number(el.dataset.case);
+          location.hash = '#/violations';
+        };
       });
       loadTracks();
       loadAudits();

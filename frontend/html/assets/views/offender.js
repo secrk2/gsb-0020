@@ -23,6 +23,12 @@
 
     root.innerHTML = `
       <div class="phone-wrap">
+        ${o.status === 'RELEASED' ? `
+        <div class="case-seal" style="margin-bottom:12px">
+          📜 <b>社区矫正已解除</b><br/>
+          解除证明书：<b>${UI.esc(o.releaseCertificateNo || '—')}</b><br/>
+          解除后无需日常报到，定位数据已停止实时更新；矫正档案按编号长期保存。
+        </div>` : ''}
         <div class="page-head" style="margin-bottom:12px">
           <h2 style="font-size:18px">📱 我的矫正</h2>
           <div class="desc">${UI.esc(o.officeName)} · 电子围栏半径 ${o.fenceRadiusMeters} 米</div>
@@ -187,6 +193,10 @@
 
     // ----- 报到 -----
     root.querySelector('#btn-checkin').onclick = async () => {
+      if (o.status === 'RELEASED') {
+        UI.toast('矫正已解除，无需再日常报到', 'warn');
+        return;
+      }
       if (!currentFix) { UI.toast('请先获取当前定位', 'warn'); return; }
       const ageSec = Math.round((Date.now() - currentFix.fixTs) / 1000);
       if (ageSec > 300) {
@@ -235,6 +245,7 @@
 
     // ----- 离线定位 -----
     root.querySelector('#btn-capture').onclick = () => {
+      if (o.status === 'RELEASED') { UI.toast('矫正已解除，定位已停止更新', 'warn'); return; }
       const fix = pickCaptureFix(o);
       TrackQueue.capture(fix.lat, fix.lng, fix.age);
     };

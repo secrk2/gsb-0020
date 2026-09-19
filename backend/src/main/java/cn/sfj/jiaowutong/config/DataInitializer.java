@@ -47,6 +47,10 @@ public class DataInitializer implements ApplicationRunner {
     private final GeoFenceRepository fenceRepository;
     private final FenceScheduleRepository scheduleRepository;
     private final MonitorActionRepository monitorActionRepository;
+    private final ViolationCaseRepository violationCaseRepository;
+    private final ViolationCaseActionRepository violationCaseActionRepository;
+    private final ReleaseAssessmentRepository releaseAssessmentRepository;
+    private final ReleaseAssessmentActionRepository releaseAssessmentActionRepository;
     private final PasswordEncoder passwordEncoder;
     private final ObjectMapper objectMapper;
 
@@ -60,6 +64,10 @@ public class DataInitializer implements ApplicationRunner {
                            GeoFenceRepository fenceRepository,
                            FenceScheduleRepository scheduleRepository,
                            MonitorActionRepository monitorActionRepository,
+                           ViolationCaseRepository violationCaseRepository,
+                           ViolationCaseActionRepository violationCaseActionRepository,
+                           ReleaseAssessmentRepository releaseAssessmentRepository,
+                           ReleaseAssessmentActionRepository releaseAssessmentActionRepository,
                            PasswordEncoder passwordEncoder,
                            ObjectMapper objectMapper) {
         this.officeRepository = officeRepository;
@@ -72,6 +80,10 @@ public class DataInitializer implements ApplicationRunner {
         this.fenceRepository = fenceRepository;
         this.scheduleRepository = scheduleRepository;
         this.monitorActionRepository = monitorActionRepository;
+        this.violationCaseRepository = violationCaseRepository;
+        this.violationCaseActionRepository = violationCaseActionRepository;
+        this.releaseAssessmentRepository = releaseAssessmentRepository;
+        this.releaseAssessmentActionRepository = releaseAssessmentActionRepository;
         this.passwordEncoder = passwordEncoder;
         this.objectMapper = objectMapper;
     }
@@ -130,7 +142,7 @@ public class DataInitializer implements ApplicationRunner {
         seeds.add(new SeedObj("JWT26002", "王秀兰", chengguan, CorrectionStatus.LEAVE,
                 "FRIDAY", "交通肇事罪", today.minusMonths(5), today.plusMonths(7)));
         seeds.add(new SeedObj("JWT26003", "李志强", chengguan, CorrectionStatus.ADMONISHED,
-                "TUESDAY", "故意伤害罪", today.minusMonths(10), today.plusMonths(2)));
+                "TUESDAY", "故意伤害罪", today.minusMonths(10), today.plusDays(12)));
         seeds.add(new SeedObj("JWT26004", "赵敏", chengguan, CorrectionStatus.RELEASED,
                 "MONDAY", "盗窃罪", today.minusYears(1), today.minusDays(20)));
 
@@ -271,19 +283,125 @@ public class DataInitializer implements ApplicationRunner {
                 yining.getCenterLat() + 0.001, yining.getCenterLng(), true));
 
         // ---------- 红点事件（时间均为 UTC） ----------
-        violationRepository.save(new ViolationEvent(zhang, "ABSENT",
+        ViolationEvent evAbsent = violationRepository.save(new ViolationEvent(zhang, "ABSENT",
                 "对象 Z-JWT26001 今日应到司法所/APP 报到，截至目前未报到", now.minusSeconds(20 * 60)));
-        violationRepository.save(new ViolationEvent(chen, "GEOFENCE_BREACH",
+        ViolationEvent evBreach = violationRepository.save(new ViolationEvent(chen, "GEOFENCE_BREACH",
                 "对象 C-JWT26005 定位越出「青山乡规定活动范围」多边形围栏，最近定位时间（Asia/Shanghai）"
                         + ZonedDateTime.ofInstant(breachT, SH).toLocalDateTime() + "，末三点为离线补传",
                 now.minusSeconds(10)));
-        violationRepository.save(new ViolationEvent(zhou, "FORBIDDEN_ZONE",
+        ViolationEvent evForbidden = violationRepository.save(new ViolationEvent(zhou, "FORBIDDEN_ZONE",
                 "对象 Z-JWT26009 定位进入「龙湖废弃码头（全天禁入）」禁区，最近定位时间（Asia/Shanghai）"
                         + ZonedDateTime.ofInstant(now.minusSeconds(15), SH).toLocalDateTime(),
                 now.minusSeconds(12)));
-        violationRepository.save(new ViolationEvent(objs.get(2), "ADMONISH",
+        ViolationEvent evAdmonish = violationRepository.save(new ViolationEvent(objs.get(2), "ADMONISH",
                 "对象 L-JWT26003 因本周两次未按规定时间报到，被予以训诫",
                 today.minusDays(1).atTime(15, 30).atZone(SH).toInstant()));
+
+        // ---------- 违规处置案件 ----------
+        // 陈大山越界：已登记待处置案件，时间窗内两条同类越界预警并入（不刷一串红点）
+        ViolationCase chenCase = new ViolationCase("AJ26-0001", chen, "GEOFENCE_BREACH",
+                "定位连续越出青山乡活动范围，需约谈训诫或提请收监", 0L, "罗建军");
+        violationCaseRepository.save(chenCase);
+        violationCaseActionRepository.save(new ViolationCaseAction(chenCase.getId(),
+                ViolationActionType.REGISTER, 0L, "罗建军",
+                "夜查发现腕表定位越界，登记受理", ViolationCaseStatus.REGISTERED,
+                "由预警 #" + evBreach.getId() + " 登记"));
+        evBreach.setCaseId(chenCase.getId());
+        evBreach.setReadFlag(true);
+        violationRepository.save(evBreach);
+        ViolationEvent evBreach2 = violationRepository.save(new ViolationEvent(chen, "GEOFENCE_BREACH",
+                "对象 C-JWT26005 再次定位越出青山乡活动范围（同一时间窗并入既有案件，不另立案）",
+                now.minusSeconds(5 * 60)));
+        evBreach2.setCaseId(chenCase.getId());
+        evBreach2.setReadFlag(true);
+        violationRepository.save(evBreach2);
+        violationCaseActionRepository.save(new ViolationCaseAction(chenCase.getId(),
+                ViolationActionType.REGISTER, 0L, "罗建军",
+                "时间窗内同类预警并入（不另立案件）：GEOFENCE_BREACH", ViolationCaseStatus.REGISTERED,
+                "合并立案"));
+
+        // 李志强训诫：已结案的违规处置案件（登记 → 训诫，全程留痕）
+        ViolationCase liCase = new ViolationCase("AJ26-0002", objs.get(2), "ABSENT",
+                "本周两次未按规定时间报到，依规予以训诫", 0L, "李建国");
+        violationCaseRepository.save(liCase);
+        violationCaseActionRepository.save(new ViolationCaseAction(liCase.getId(),
+                ViolationActionType.REGISTER, 0L, "李建国",
+                "网格员上报连续两次未报到，登记受理", ViolationCaseStatus.REGISTERED,
+                "由预警 #" + evAdmonish.getId() + " 登记"));
+        evAdmonish.setCaseId(liCase.getId());
+        evAdmonish.setReadFlag(true);
+        violationRepository.save(evAdmonish);
+        liCase.setStatus(ViolationCaseStatus.ADMONISHED);
+        liCase.setClosedAt(today.minusDays(1).atTime(15, 30).atZone(SH).toInstant());
+        violationCaseRepository.save(liCase);
+        violationCaseActionRepository.save(new ViolationCaseAction(liCase.getId(),
+                ViolationActionType.ADMONISH, 0L, "李建国",
+                "违反监管规定，本周两次未按规定时间报到，予以训诫并责令书面检查",
+                ViolationCaseStatus.ADMONISHED, "矫正档案状态已流转为「训诫」"));
+
+        // 张伟国逾时未报：保留为未登记的原始红点，演示“红点 → 登记处置”
+
+        // ---------- 解除与评估 ----------
+        CorrectionObject zhao = objs.get(3);
+        // 赵敏：矫正期满已解除归档——评估报告走完状态机、出具永久解除标记、位置冻结
+        ReleaseAssessment zhaoPg = new ReleaseAssessment("PG26-0001", zhao, zhao.getEndDate(), 0L, "李建国");
+        zhaoPg.setStatus(ReleaseAssessmentStatus.DONE);
+        zhaoPg.setCheckinDayRate(0.97d);
+        zhaoPg.setKeyReportRate(1.0d);
+        zhaoPg.setTrackActiveDays(28);
+        zhaoPg.setBreachCount30d(0);
+        zhaoPg.setAdmonishCount(0);
+        zhaoPg.setOpenViolationCase(false);
+        zhaoPg.setConclusion("SUGGEST_RELEASE");
+        zhaoPg.setOpinion("矫正期间认罪悔罪、遵规守纪，报到与教育学习均达标，建议按期解除。");
+        zhaoPg.setSubmittedAt(today.minusDays(25).atTime(9, 0).atZone(SH).toInstant());
+        zhaoPg.setApprovedBy(0L);
+        zhaoPg.setApprovedByName("陈督导");
+        zhaoPg.setApprovedAt(today.minusDays(22).atTime(10, 0).atZone(SH).toInstant());
+        Instant zhaoReleasedAt = today.minusDays(20).atTime(9, 30).atZone(SH).toInstant();
+        zhaoPg.setReleasedAt(zhaoReleasedAt);
+        zhaoPg.setReleasedBy(0L);
+        zhaoPg.setReleasedByName("李建国");
+        zhaoPg.setReleaseCertificateNo("JCS-JC26-JWT26004");
+        releaseAssessmentRepository.save(zhaoPg);
+        releaseAssessmentActionRepository.save(new ReleaseAssessmentAction(zhaoPg.getId(),
+                ReleaseAssessmentActionType.GENERATE, 0L, "李建国",
+                "矫正期满生成解除评估报告", ReleaseAssessmentStatus.DRAFT, "近30天双口径均达标"));
+        releaseAssessmentActionRepository.save(new ReleaseAssessmentAction(zhaoPg.getId(),
+                ReleaseAssessmentActionType.SUBMIT, 0L, "李建国",
+                "提交区局审批", ReleaseAssessmentStatus.SUBMITTED, "结论：建议按期解除"));
+        releaseAssessmentActionRepository.save(new ReleaseAssessmentAction(zhaoPg.getId(),
+                ReleaseAssessmentActionType.APPROVE, 0L, "陈督导",
+                "材料齐全，表现稳定，审批通过", ReleaseAssessmentStatus.APPROVED, "评估审批通过"));
+        releaseAssessmentActionRepository.save(new ReleaseAssessmentAction(zhaoPg.getId(),
+                ReleaseAssessmentActionType.EXECUTE, 0L, "李建国",
+                "矫正期满，依法解除社区矫正", ReleaseAssessmentStatus.DONE,
+                "出具解除证明书 JCS-JC26-JWT26004；实时位置已清空并停止更新"));
+        zhao.setReleaseCertificateNo("JCS-JC26-JWT26004");
+        zhao.setReleasedMarkedAt(zhaoReleasedAt);
+        zhao.setLocationFrozen(true);
+        objectRepository.save(zhao);
+
+        // 李志强（12 天后期满，训诫态）：评估已提交待审批
+        ReleaseAssessment liPg = new ReleaseAssessment("PG26-0002", objs.get(2), objs.get(2).getEndDate(),
+                0L, "李建国");
+        liPg.setCheckinDayRate(0.7d);
+        liPg.setKeyReportRate(0.75d);
+        liPg.setTrackActiveDays(22);
+        liPg.setBreachCount30d(0);
+        liPg.setAdmonishCount(1);
+        liPg.setOpenViolationCase(false);
+        liPg.setConclusion("CONTINUE_EDUCATION");
+        liPg.setOpinion("近期有一次训诫记录，需结合期满前教育表现综合研判。");
+        liPg.setStatus(ReleaseAssessmentStatus.SUBMITTED);
+        liPg.setSubmittedAt(now.minusSeconds(3600));
+        releaseAssessmentRepository.save(liPg);
+        releaseAssessmentActionRepository.save(new ReleaseAssessmentAction(liPg.getId(),
+                ReleaseAssessmentActionType.GENERATE, 0L, "李建国",
+                "期满前生成解除评估报告", ReleaseAssessmentStatus.DRAFT, "含 1 次训诫记录"));
+        releaseAssessmentActionRepository.save(new ReleaseAssessmentAction(liPg.getId(),
+                ReleaseAssessmentActionType.SUBMIT, 0L, "李建国",
+                "提交区局审批", ReleaseAssessmentStatus.SUBMITTED, "结论：建议延长教育"));
 
         // ---------- 账号 ----------
         createAccount("jiandu", "陈督导", Role.SUPERVISOR, null, null);

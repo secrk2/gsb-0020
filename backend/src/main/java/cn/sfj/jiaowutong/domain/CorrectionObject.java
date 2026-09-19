@@ -83,6 +83,21 @@ public class CorrectionObject {
     @Column(nullable = false)
     private Instant createdAt;
 
+    /** 解除证明书编号（永久解除标记，出具后不可更改；档案仍可按矫正编号检索） */
+    @Column(name = "release_certificate_no", length = 32)
+    private String releaseCertificateNo;
+
+    /** 永久解除标记出具时间（UTC） */
+    @Column(name = "released_marked_at")
+    private Instant releasedMarkedAt;
+
+    /**
+     * 解除后位置冻结：不再接收/更新实时定位，监控总览与在矫名单均不再出现；
+     * 历史轨迹与档案仍可按编号查询。
+     */
+    @Column(name = "location_frozen", nullable = false)
+    private boolean locationFrozen = false;
+
     @PrePersist
     public void prePersist() {
         if (createdAt == null) {
@@ -111,6 +126,9 @@ public class CorrectionObject {
     public Integer getLastSignal() { return lastSignal; }
     public Boolean getLastWorn() { return lastWorn; }
     public Instant getCreatedAt() { return createdAt; }
+    public String getReleaseCertificateNo() { return releaseCertificateNo; }
+    public Instant getReleasedMarkedAt() { return releasedMarkedAt; }
+    public boolean isLocationFrozen() { return locationFrozen; }
 
     public void setCorrectionNo(String correctionNo) { this.correctionNo = correctionNo; }
     public void setFullName(String fullName) { this.fullName = fullName; }
@@ -131,4 +149,7 @@ public class CorrectionObject {
     public void setLastBattery(Integer lastBattery) { this.lastBattery = lastBattery; }
     public void setLastSignal(Integer lastSignal) { this.lastSignal = lastSignal; }
     public void setLastWorn(Boolean lastWorn) { this.lastWorn = lastWorn; }
+    public void setReleaseCertificateNo(String releaseCertificateNo) { this.releaseCertificateNo = releaseCertificateNo; }
+    public void setReleasedMarkedAt(Instant releasedMarkedAt) { this.releasedMarkedAt = releasedMarkedAt; }
+    public void setLocationFrozen(boolean locationFrozen) { this.locationFrozen = locationFrozen; }
 }

@@ -6,5 +6,7 @@ public record ObjectDetailView(ObjectView object,
                                List<TransitionView> transitions,
                                List<DashboardView.RedDotItem> violations,
                                boolean checkedToday,
-                               long trackCount) {
+                               long trackCount,
+                               List<ViolationCaseView> cases,
+                               ReleaseAssessmentView releaseAssessment) {
 }

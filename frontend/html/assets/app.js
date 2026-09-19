@@ -9,6 +9,8 @@
     { re: /^#\/objects$/, view: 'objects' },
     { re: /^#\/objects\/(\d+)$/, view: 'detail' },
     { re: /^#\/monitor(?:\/(\d+))?$/, view: 'monitor' },
+    { re: /^#\/violations(?:\/(\d+))?$/, view: 'violations' },
+    { re: /^#\/release(?:\/(\d+))?$/, view: 'release' },
     { re: /^#\/offender$/, view: 'offender' },
   ];
 
@@ -28,6 +30,8 @@
     return [
       { hash: '#/dashboard', icon: '🎯', label: '矫务作战台', view: 'dashboard' },
       { hash: '#/monitor', icon: '🛰️', label: '定位监控', view: 'monitor' },
+      { hash: '#/violations', icon: '⚖️', label: '违规处置', view: 'violations' },
+      { hash: '#/release', icon: '📭', label: '解除与评估', view: 'release' },
       { hash: '#/objects', icon: '🗂️', label: '对象档案', view: 'objects' },
     ];
   }

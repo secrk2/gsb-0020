@@ -167,7 +167,12 @@
             + (result.newViolationGenerated ? '，已生成预警' : ''));
         }
       } catch (e) {
-        if (e.offline || e.code === 'NETWORK_OFFLINE') {
+        if (e.code === 'LOCATION_UPDATES_CLOSED') {
+          // 矫正已解除：定位永久停止更新，清空本地队列，不再重放
+          this.queue = [];
+          save(QUEUE_KEY, this.queue);
+          this.log('OK', '矫正已解除，定位数据已停止实时更新，本地待传点已清空，不再上报');
+        } else if (e.offline || e.code === 'NETWORK_OFFLINE') {
           this.online = false;
           this.log('OFFLINE', '补传失败：网络实际不可用，继续保留本地队列（' + batch.length + ' 点）');
         } else {
