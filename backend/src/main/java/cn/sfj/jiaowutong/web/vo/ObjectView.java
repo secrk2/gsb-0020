@@ -18,9 +18,13 @@ public record ObjectView(Long id, String correctionNo, String maskedName, String
                          Instant lastLocationAt, Boolean lastInsideFence, Boolean lastForbidden,
                          Double lastLat, Double lastLng,
                          Integer lastBattery, Integer lastSignal, Boolean lastWorn,
-                         Double fenceCenterLat, Double fenceCenterLng, Integer fenceRadiusMeters) {
+                         Double fenceCenterLat, Double fenceCenterLng, Integer fenceRadiusMeters,
+                         boolean releasedPermanently, Instant releasedAt, String releaseCertificateNo,
+                         boolean locationFrozen) {
 
     public static ObjectView of(CorrectionObject o, boolean includeFullName) {
+        boolean terminal = o.getStatus() == cn.sfj.jiaowutong.domain.CorrectionStatus.RELEASED
+                || o.getStatus() == cn.sfj.jiaowutong.domain.CorrectionStatus.REIMPRISONED;
         return new ObjectView(
                 o.getId(),
                 o.getCorrectionNo(),
@@ -47,7 +51,12 @@ public record ObjectView(Long id, String correctionNo, String maskedName, String
                 o.getLastWorn(),
                 o.getOffice().getCenterLat(),
                 o.getOffice().getCenterLng(),
-                o.getOffice().getFenceRadiusMeters()
+                o.getOffice().getFenceRadiusMeters(),
+                o.isReleasedPermanently(),
+                o.getReleasedAt(),
+                o.getReleaseCertificateNo(),
+                // 终态对象定位数据不再实时更新（监控/上报已停），档案据此提示“位置已冻结”
+                terminal
         );
     }
 }

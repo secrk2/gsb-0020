@@ -31,15 +31,18 @@ public class DashboardService {
     private final CorrectionObjectRepository objectRepository;
     private final CheckInRepository checkInRepository;
     private final ViolationEventRepository violationRepository;
+    private final DisposalRecordRepository disposalRepository;
 
     public DashboardService(JudicialOfficeRepository officeRepository,
                             CorrectionObjectRepository objectRepository,
                             CheckInRepository checkInRepository,
-                            ViolationEventRepository violationRepository) {
+                            ViolationEventRepository violationRepository,
+                            DisposalRecordRepository disposalRepository) {
         this.officeRepository = officeRepository;
         this.objectRepository = objectRepository;
         this.checkInRepository = checkInRepository;
         this.violationRepository = violationRepository;
+        this.disposalRepository = disposalRepository;
     }
 
     @Transactional(readOnly = true)
@@ -125,16 +128,26 @@ public class DashboardService {
         }
         due.sort(Comparator.comparing(DashboardView.DueTodayItem::correctionNo));
 
-        // 红点：未处置事件，按范围过滤
+        // 红点：未处置事件，按范围过滤；终态（解除/收监）对象一律不上红点（防御性，正常在终态流转时已核销）
         List<DashboardView.RedDotItem> redDots = violationRepository.findAll().stream()
                 .filter(v -> !v.getReadFlag())
+                .filter(v -> v.getOffender().getStatus() != CorrectionStatus.RELEASED
+                        && v.getOffender().getStatus() != CorrectionStatus.REIMPRISONED)
                 .filter(v -> scoped.stream().anyMatch(o -> o.getId().equals(v.getOffender().getId())))
                 .sorted(Comparator.comparing(ViolationEvent::getEventTime).reversed())
                 .limit(30)
                 .map(v -> ObjectService.toRedDot(v, v.getOffender()))
                 .toList();
 
+        // 违规处置中心：已登记受理、待处置的案件数（同一对象同一事由时间窗内只有一条）
+        Set<Long> scopedIds = scoped.stream().map(CorrectionObject::getId)
+                .collect(java.util.stream.Collectors.toSet());
+        long disposalPending = disposalRepository.findAll().stream()
+                .filter(r -> r.getStatus() == DisposalStatus.REGISTERED)
+                .filter(r -> scopedIds.contains(r.getOffender().getId()))
+                .count();
+
         return new DashboardView(nowUtc.toString(), user.role().name(), globalFunnel,
-                officeFunnels, due, redDots, redDots.size());
+                officeFunnels, due, redDots, redDots.size(), disposalPending);
     }
 }

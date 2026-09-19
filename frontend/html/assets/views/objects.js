@@ -17,11 +17,13 @@
 
     let statusFilter = '';
     let officeFilter = '';
+    let keyword = '';
 
     async function load() {
       const params = new URLSearchParams();
       if (statusFilter) params.set('status', statusFilter);
       if (officeFilter) params.set('officeId', officeFilter);
+      if (keyword.trim()) params.set('keyword', keyword.trim());
       listRoot.innerHTML = `<div class="skeleton">加载中…</div>`;
       try {
         const items = await Api.get('/objects' + (params.toString() ? '?' + params : ''));
@@ -34,10 +36,14 @@
     root.innerHTML = `
       <div class="page-head">
         <h2>🗂️ 对象档案</h2>
-        <div class="desc">列表按规定脱敏显示（姓氏首字母-编号）；查看全名须二次确认并填写理由，全程留痕</div>
+        <div class="desc">列表按规定脱敏显示（姓氏首字母-编号）；查看全名须二次确认并填写理由，全程留痕。
+          默认仅显示<b>在管对象</b>，已解除/收监的归档档案可按矫正编号检索或用状态筛选查看。</div>
       </div>
       <div class="card">
         <div class="filter-bar">
+          <label style="font-size:13px;color:var(--ink-secondary)">编号检索</label>
+          <input class="input" id="f-keyword" placeholder="输入矫正编号，如 JWT26004"
+            style="max-width:230px" autocomplete="off"/>
           <label style="font-size:13px;color:var(--ink-secondary)">状态</label>
           <select class="input" id="f-status">
             <option value="">全部状态</option>
@@ -60,6 +66,11 @@
     root.querySelector('#f-status').onchange = (e) => { statusFilter = e.target.value; load(); };
     const officeSel = root.querySelector('#f-office');
     if (officeSel) officeSel.onchange = (e) => { officeFilter = e.target.value; load(); };
+    let kwTimer = null;
+    root.querySelector('#f-keyword').oninput = (e) => {
+      clearTimeout(kwTimer);
+      kwTimer = setTimeout(() => { keyword = e.target.value; load(); }, 300);
+    };
 
     function renderTable(items) {
       if (!items.length) {
@@ -76,17 +87,20 @@
           </tr></thead>
           <tbody>
             ${items.map((o) => {
-              const loc = o.lastLocationAt
-                ? `${UI.fmtTzFull(o.lastLocationAt, o.timezone)} ` +
-                  (o.lastInsideFence
-                    ? '<span class="badge green" style="margin-left:4px">围栏内</span>'
-                    : '<span class="badge red" style="margin-left:4px">📍越界</span>')
-                    + (o.lastForbidden ? '<span class="badge red" style="margin-left:4px">禁区</span>' : '')
-                : '<span style="color:var(--ink-muted)">无定位</span>';
+              const loc = o.locationFrozen
+                ? '<span style="color:var(--ink-muted)">位置已冻结</span>'
+                : (o.lastLocationAt
+                  ? `${UI.fmtTzFull(o.lastLocationAt, o.timezone)} ` +
+                    (o.lastInsideFence
+                      ? '<span class="badge green" style="margin-left:4px">围栏内</span>'
+                      : '<span class="badge red" style="margin-left:4px">📍越界</span>')
+                      + (o.lastForbidden ? '<span class="badge red" style="margin-left:4px">禁区</span>' : '')
+                  : '<span style="color:var(--ink-muted)">无定位</span>');
               return `
               <tr class="clickable" data-id="${o.id}">
                 <td data-label="矫正编号">${UI.esc(o.correctionNo)}</td>
-                <td data-label="脱敏姓名"><b>${UI.esc(o.maskedName)}</b></td>
+                <td data-label="脱敏姓名"><b>${UI.esc(o.maskedName)}</b>
+                  ${o.releasedPermanently ? '<div style="margin-top:2px"><span class="badge green">📭已永久解除</span></div>' : ''}</td>
                 ${showOffice ? `<td data-label="司法所">${UI.esc(o.officeName)}</td>` : ''}
                 <td data-label="状态">${UI.statusBadge(o.status)}</td>
                 <td data-label="罪名">${UI.esc(o.charge || '—')}</td>

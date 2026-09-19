@@ -82,11 +82,13 @@
                   ? '<span class="badge green">已报到</span>'
                   : '<span class="badge gray">未报到</span>'}</dd>
                 <dt>最近定位</dt>
-                <dd>${o.lastLocationAt
-                  ? `${UI.fmtTzFull(o.lastLocationAt, o.timezone)}（${UI.esc(o.timezone)}） · ` +
-                    (o.lastInsideFence ? '<span class="badge green">围栏内</span>' : '<span class="badge red">📍越界</span>')
-                    + (o.lastForbidden ? ' <span class="badge red">禁区</span>' : '')
-                  : '暂无'}</dd>
+                <dd>${o.locationFrozen
+                  ? '<span class="badge gray">🧊 位置数据已冻结</span><span style="color:var(--ink-muted);font-size:12.5px"> 终态后不再实时更新</span>'
+                  : (o.lastLocationAt
+                    ? `${UI.fmtTzFull(o.lastLocationAt, o.timezone)}（${UI.esc(o.timezone)}） · ` +
+                      (o.lastInsideFence ? '<span class="badge green">围栏内</span>' : '<span class="badge red">📍越界</span>')
+                      + (o.lastForbidden ? ' <span class="badge red">禁区</span>' : '')
+                    : '暂无')}</dd>
               </dl>
               <div id="audit-slot"></div>
             </div>
@@ -147,7 +149,8 @@
               </div>
             </div>
           </div>
-        </div>`;
+        </div>
+        <div id="extra-slot" style="margin-top:16px"></div>`;
 
       root.querySelector('#btn-back').onclick = () => { location.hash = '#/objects'; };
       root.querySelector('#btn-reveal').onclick = onReveal;
@@ -157,6 +160,67 @@
       });
       loadTracks();
       loadAudits();
+      loadExtra();
+    }
+
+    // 违规处置记录 + 解除评估入口（并行加载，失败不阻塞主档）
+    async function loadExtra() {
+      const slot = root.querySelector('#extra-slot');
+      if (!slot) return;
+      const [disposals, assessment] = await Promise.all([
+        Api.get('/disposals?objectId=' + o.id).catch(() => []),
+        Api.get('/release/objects/' + o.id + '/latest').catch(() => null),
+      ]);
+
+      const dispHtml = `
+        <div class="card" style="margin-top:0">
+          <div class="card-title">⚖️ 违规处置记录
+            <span class="sub">${disposals.length} 单</span></div>
+          <div class="table-wrap">
+            ${disposals.length ? `<table class="data"><thead><tr><th>单号</th><th>事由</th><th>状态</th><th>登记时间</th><th></th></tr></thead>
+              <tbody>${disposals.map((c) => `
+                <tr class="clickable" data-disp="${c.id}">
+                  <td>${UI.esc(c.disposalNo)}</td>
+                  <td>${UI.esc(c.categoryLabel)}</td>
+                  <td>${UI.esc(c.statusLabel)}</td>
+                  <td>${UI.fmtTzFull(c.registeredAt, o.timezone)}</td>
+                  <td><button class="btn sm" data-disp-btn="${c.id}">查看</button></td>
+                </tr>`).join('')}</tbody></table>`
+              : '<div style="color:var(--ink-muted);font-size:13px">暂无违规处置记录</div>'}
+          </div>
+        </div>`;
+
+      let relInner;
+      if (o.status === 'RELEASED') {
+        relInner = `
+          <div style="border-left:4px solid var(--good);padding:8px 12px;background:var(--good-bg,#f2faf2);border-radius:6px">
+            <div style="font-weight:700;color:var(--good)">📭 已永久解除社区矫正（标记不可逆）</div>
+            <div style="font-size:13px;color:var(--ink-secondary);margin-top:4px">
+              ${o.releaseCertificateNo ? '解除证明书：<b>' + UI.esc(o.releaseCertificateNo) + '</b><br/>' : ''}
+              ${o.releasedAt ? '解除时间：' + UI.fmtTzFull(o.releasedAt, o.timezone) + '（' + UI.esc(o.timezone) + '）<br/>' : ''}
+              已退出在矫名单与作战台红点，位置数据不再实时更新；档案按编号归档可查。
+            </div>
+            ${assessment ? `<button class="btn sm" id="btn-assessment" style="margin-top:8px">查看解除评估报告</button>` : ''}
+          </div>`;
+      } else if (assessment) {
+        relInner = `
+          <div style="font-size:13.5px">解除评估：<span class="badge gray">${UI.esc(assessment.stageLabel)}</span>
+            <span style="color:var(--ink-muted)">（${UI.esc(assessment.assessmentNo)}）</span></div>
+          <button class="btn sm primary" id="btn-assessment" style="margin-top:8px">办理解除评估</button>`;
+      } else {
+        relInner = `<div style="color:var(--ink-muted);font-size:13px">暂无解除评估；矫正到期后可在「解除与评估」生成报告。</div>
+          <button class="btn sm" id="btn-release-list" style="margin-top:8px">前往解除与评估</button>`;
+      }
+      const relHtml = `<div class="card"><div class="card-title">📭 解除与评估</div>${relInner}</div>`;
+
+      slot.innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px" class="below-grid">${dispHtml}${relHtml}</div>`;
+      slot.querySelectorAll('[data-disp-btn]').forEach((b) => {
+        b.onclick = () => { location.hash = '#/disposals/' + b.dataset.dispBtn; };
+      });
+      const ba = slot.querySelector('#btn-assessment');
+      if (ba && assessment) ba.onclick = () => { location.hash = '#/release/assessments/' + assessment.id; };
+      const br = slot.querySelector('#btn-release-list');
+      if (br) br.onclick = () => { location.hash = '#/release'; };
     }
 
     async function onReveal() {

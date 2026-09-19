@@ -4,7 +4,6 @@ import cn.sfj.jiaowutong.common.ApiException;
 import cn.sfj.jiaowutong.domain.*;
 import cn.sfj.jiaowutong.repo.CorrectionObjectRepository;
 import cn.sfj.jiaowutong.repo.TrackPointRepository;
-import cn.sfj.jiaowutong.repo.ViolationEventRepository;
 import cn.sfj.jiaowutong.security.LoginUser;
 import cn.sfj.jiaowutong.web.dto.TrackBatchRequest;
 import cn.sfj.jiaowutong.web.vo.TrackIngestView;
@@ -50,16 +49,16 @@ public class TrackService {
 
     private final TrackPointRepository trackPointRepository;
     private final CorrectionObjectRepository objectRepository;
-    private final ViolationEventRepository violationRepository;
+    private final ViolationEventService violationEventService;
     private final FenceService fenceService;
 
     public TrackService(TrackPointRepository trackPointRepository,
                         CorrectionObjectRepository objectRepository,
-                        ViolationEventRepository violationRepository,
+                        ViolationEventService violationEventService,
                         FenceService fenceService) {
         this.trackPointRepository = trackPointRepository;
         this.objectRepository = objectRepository;
-        this.violationRepository = violationRepository;
+        this.violationEventService = violationEventService;
         this.fenceService = fenceService;
     }
 
@@ -70,6 +69,18 @@ public class TrackService {
         }
         CorrectionObject obj = objectRepository.findById(user.offenderId())
                 .orElseThrow(() -> ApiException.notFound("本人档案不存在"));
+
+        // 终态冻结：已解除（永久标记）/已收监对象不再更新实时位置，也不再产生越界红点。
+        // 档案仍可按编号查询，但作战台、在矫监控不再出现其位置。
+        if (obj.getStatus() == CorrectionStatus.RELEASED
+                || obj.getStatus() == CorrectionStatus.REIMPRISONED) {
+            return new TrackIngestView(request.points() == null ? 0 : request.points().size(),
+                    0, 0, 0, 0, List.of(), 0, 0,
+                    obj.getLastLocationAt(), obj.getLastLat(), obj.getLastLng(),
+                    !Boolean.FALSE.equals(obj.getLastInsideFence()),
+                    Boolean.TRUE.equals(obj.getLastForbidden()),
+                    obj.getLastBattery(), obj.getLastSignal(), obj.getLastWorn(), false);
+        }
 
         Instant now = Instant.now();
         Instant realtimeFloor = now.minusSeconds(REALTIME_SKEW_MIN * 60);
@@ -205,22 +216,19 @@ public class TrackService {
                     || obj.getStatus() == CorrectionStatus.ADMONISHED
                     || obj.getStatus() == CorrectionStatus.LEAVE;
             if (countedStatus) {
-                // 越界红点边沿
-                if (latest.getOutsideFence() && !alreadyOpen(obj.getId(), "GEOFENCE_BREACH")) {
-                    violationRepository.save(new ViolationEvent(obj, "GEOFENCE_BREACH",
+                // 越界红点边沿（统一走事件服务：未挂单红点边沿去重 + 时间窗内只合成一条处置单）
+                if (latest.getOutsideFence()) {
+                    newBreach = violationEventService.emit(obj, "GEOFENCE_BREACH",
                             "对象 " + obj.getMaskedName() + " 定位越出「" + obj.getOffice().getName()
                                     + "」活动范围，最近定位时间（" + obj.getOffice().getTimezone() + "）"
-                                    + fmtLocal(latest.getPointTime(), fences.zone()), now));
-                    newBreach = true;
+                                    + fmtLocal(latest.getPointTime(), fences.zone()), now);
                 }
                 // 禁区红点边沿
-                if (Boolean.TRUE.equals(latest.getForbiddenZone())
-                        && !alreadyOpen(obj.getId(), "FORBIDDEN_ZONE")) {
-                    violationRepository.save(new ViolationEvent(obj, "FORBIDDEN_ZONE",
+                if (Boolean.TRUE.equals(latest.getForbiddenZone())) {
+                    newForbidden = violationEventService.emit(obj, "FORBIDDEN_ZONE",
                             "对象 " + obj.getMaskedName() + " 在禁行时段进入「" + obj.getOffice().getName()
                                     + "」辖区禁区，最近定位时间（" + obj.getOffice().getTimezone() + "）"
-                                    + fmtLocal(latest.getPointTime(), fences.zone()), now));
-                    newForbidden = true;
+                                    + fmtLocal(latest.getPointTime(), fences.zone()), now);
                 }
             }
         }
@@ -232,14 +240,6 @@ public class TrackService {
                 Boolean.TRUE.equals(obj.getLastForbidden()),
                 obj.getLastBattery(), obj.getLastSignal(), obj.getLastWorn(),
                 newBreach || newForbidden);
-    }
-
-    private boolean alreadyOpen(Long offenderId, String type) {
-        return violationRepository.findTop20ByOffender_IdOrderByEventTimeDesc(offenderId).stream()
-                .filter(v -> type.equals(v.getType()))
-                .findFirst()
-                .map(v -> !v.getReadFlag())
-                .orElse(false);
     }
 
     static String fmtLocal(Instant at, ZoneId zone) {

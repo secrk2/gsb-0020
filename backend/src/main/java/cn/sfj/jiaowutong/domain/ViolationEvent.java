@@ -38,6 +38,15 @@ public class ViolationEvent {
     @Column(name = "read_flag", nullable = false)
     private Boolean readFlag = false;
 
+    /**
+     * 该事件被合并进的违规处置记录。登记处置时把同一对象同一事由时间窗内的事件挂到同一条记录，
+     * 处置结论按记录走状态机，红点不允许被直接改成“已处置”，只能通过处置流程联动核销。
+     * 历史/独立事件可为空（如单纯训诫提示）。
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "disposal_id")
+    private DisposalRecord disposal;
+
     public ViolationEvent() {
     }
 
@@ -57,4 +66,6 @@ public class ViolationEvent {
     public Instant getEventTime() { return eventTime; }
     public Boolean getReadFlag() { return readFlag; }
     public void setReadFlag(Boolean readFlag) { this.readFlag = readFlag; }
+    public DisposalRecord getDisposal() { return disposal; }
+    public void setDisposal(DisposalRecord disposal) { this.disposal = disposal; }
 }

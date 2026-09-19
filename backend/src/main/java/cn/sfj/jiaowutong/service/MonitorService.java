@@ -6,7 +6,6 @@ import cn.sfj.jiaowutong.repo.*;
 import cn.sfj.jiaowutong.security.LoginUser;
 import cn.sfj.jiaowutong.web.dto.ClearTracksRequest;
 import cn.sfj.jiaowutong.web.dto.VerifyPointRequest;
-import cn.sfj.jiaowutong.web.vo.CompletionView;
 import cn.sfj.jiaowutong.web.vo.FenceView;
 import cn.sfj.jiaowutong.web.vo.MonitorOverviewView;
 import cn.sfj.jiaowutong.web.vo.TrackReplayView;
@@ -14,10 +13,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.DayOfWeek;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
@@ -46,36 +43,34 @@ public class MonitorService {
     private static final long OFFLINE_AFTER_SEC = 15 * 60;
     /** 首屏抽稀后的最大点数（5s 一帧 30 天理论 50 万点，不抽稀无法渲染） */
     private static final int FIRST_LOAD_MAX_POINTS = 1500;
-    /** 两口径相差超过该百分点视为“结论相反”，界面需显著提示 */
-    private static final double OPPOSITE_GAP = 0.25d;
 
     private final CorrectionObjectRepository objectRepository;
     private final TrackPointRepository trackPointRepository;
-    private final CheckInRepository checkInRepository;
     private final GeoFenceRepository geoFenceRepository;
     private final FenceScheduleRepository scheduleRepository;
     private final MonitorActionRepository actionRepository;
     private final AccessControlService accessControl;
     private final FenceService fenceService;
+    private final CompletionService completionService;
     private final ObjectMapper objectMapper;
 
     public MonitorService(CorrectionObjectRepository objectRepository,
                           TrackPointRepository trackPointRepository,
-                          CheckInRepository checkInRepository,
                           GeoFenceRepository geoFenceRepository,
                           FenceScheduleRepository scheduleRepository,
                           MonitorActionRepository actionRepository,
                           AccessControlService accessControl,
                           FenceService fenceService,
+                          CompletionService completionService,
                           ObjectMapper objectMapper) {
         this.objectRepository = objectRepository;
         this.trackPointRepository = trackPointRepository;
-        this.checkInRepository = checkInRepository;
         this.geoFenceRepository = geoFenceRepository;
         this.scheduleRepository = scheduleRepository;
         this.actionRepository = actionRepository;
         this.accessControl = accessControl;
         this.fenceService = fenceService;
+        this.completionService = completionService;
         this.objectMapper = objectMapper;
     }
 
@@ -179,7 +174,7 @@ public class MonitorService {
                 o.getOffice().getTimezone(), week ? "WEEK" : "MONTH",
                 windowFrom, windowTo, Instant.now(), incremental,
                 points, accepted.size(), driftInWindow, fences, lastClear,
-                buildCompletion(o, zone));
+                completionService.build(o, zone));
     }
 
     /**
@@ -352,60 +347,5 @@ public class MonitorService {
                 .toList();
     }
 
-    // ---------------- 在矫完成度（双口径） ----------------
-
-    private CompletionView buildCompletion(CorrectionObject o, ZoneId zone) {
-        // 与“月视图”一致取近 30 天（按对象时区的日历日）为统一窗口，两口径才可比；
-        // 不用整个矫正期，否则打卡天数口径分母是自然日，数值恒低、失去区分度。
-        LocalDate today = Instant.now().atZone(zone).toLocalDate();
-        LocalDate basisFrom = today.minusDays(29);
-        LocalDate basisTo = today;
-
-        Set<LocalDate> checkDays = checkInRepository.findByOffender_IdOrderByCheckDateAscIdAsc(o.getId())
-                .stream()
-                .map(CheckIn::getCheckDate)
-                .filter(d -> !d.isBefore(basisFrom) && !d.isAfter(basisTo))
-                .collect(Collectors.toCollection(java.util.TreeSet::new));
-
-        // 口径一：打卡天数 / 自然日
-        int calendarDays = (int) (java.time.temporal.ChronoUnit.DAYS.between(basisFrom, basisTo) + 1);
-        int actualDays = checkDays.size();
-        double dayRate = round1((double) actualDays / calendarDays);
-
-        // 口径二：规定报到日（星期匹配）当天完成的节点数 / 应到节点数
-        DayOfWeek reportDay = parseDay(o.getReportDay());
-        int dueNodes = 0;
-        int doneNodes = 0;
-        for (LocalDate d = basisFrom; !d.isAfter(basisTo); d = d.plusDays(1)) {
-            if (reportDay != null && d.getDayOfWeek() == reportDay) {
-                dueNodes++;
-                if (checkDays.contains(d)) {
-                    doneNodes++;
-                }
-            }
-        }
-        double keyRate = dueNodes == 0 ? 0d : round1((double) doneNodes / dueNodes);
-        boolean opposite = Math.abs(dayRate - keyRate) >= OPPOSITE_GAP;
-
-        return new CompletionView(
-                basisFrom.toString(), basisTo.toString(), zone.toString(),
-                actualDays, calendarDays, dayRate,
-                doneNodes, dueNodes, keyRate, opposite,
-                CompletionView.CHECKIN_DAY_DEFINITION, CompletionView.KEY_REPORT_DEFINITION);
-    }
-
-    private DayOfWeek parseDay(String name) {
-        if (name == null || name.isBlank()) {
-            return null;
-        }
-        try {
-            return DayOfWeek.valueOf(name.trim());
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    private double round1(double v) {
-        return Math.round(v * 100d) / 100d;
-    }
+    // ---------------- 在矫完成度（双口径）已抽到 CompletionService，解除评估复用同一口径 ----------------
 }

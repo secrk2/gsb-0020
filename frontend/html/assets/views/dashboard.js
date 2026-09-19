@@ -47,6 +47,10 @@
           <div class="lab">未处置预警红点</div>
           <div class="num">${d.redDotTotal}</div>
         </div>
+        <div class="stat-tile warn clickable-tile" id="tile-disposals" title="进入违规处置中心">
+          <div class="lab">待处置案件 ⚖️</div>
+          <div class="num">${d.disposalPending || 0}</div>
+        </div>
       </div>
 
       <div class="card">
@@ -98,6 +102,8 @@
       el.style.cursor = 'pointer';
       el.onclick = () => { location.hash = '#/objects/' + el.dataset.objectId; };
     });
+    const tileDisp = root.querySelector('#tile-disposals');
+    if (tileDisp) tileDisp.onclick = () => { location.hash = '#/disposals'; };
   };
 
   function officeCard(o) {

@@ -80,6 +80,21 @@ public class CorrectionObject {
     private Integer lastSignal;
     private Boolean lastWorn;
 
+    /**
+     * 解除永久标记：走完解除状态机（评估→审批→宣告解除）后置 true，不可逆。
+     * 解除后：退出在矫名单/作战台红点、定位与报到实时数据停止更新；档案仍按编号可查（归档）。
+     */
+    @Column(name = "released_permanently", nullable = false)
+    private boolean releasedPermanently = false;
+
+    /** 宣告解除时间（UTC） */
+    @Column(name = "released_at")
+    private Instant releasedAt;
+
+    /** 解除证明书编号（永久标记凭证），如 JC-JWT26004-20260830 */
+    @Column(name = "release_certificate_no", length = 40)
+    private String releaseCertificateNo;
+
     @Column(nullable = false)
     private Instant createdAt;
 
@@ -110,6 +125,9 @@ public class CorrectionObject {
     public Integer getLastBattery() { return lastBattery; }
     public Integer getLastSignal() { return lastSignal; }
     public Boolean getLastWorn() { return lastWorn; }
+    public boolean isReleasedPermanently() { return releasedPermanently; }
+    public Instant getReleasedAt() { return releasedAt; }
+    public String getReleaseCertificateNo() { return releaseCertificateNo; }
     public Instant getCreatedAt() { return createdAt; }
 
     public void setCorrectionNo(String correctionNo) { this.correctionNo = correctionNo; }
@@ -131,4 +149,7 @@ public class CorrectionObject {
     public void setLastBattery(Integer lastBattery) { this.lastBattery = lastBattery; }
     public void setLastSignal(Integer lastSignal) { this.lastSignal = lastSignal; }
     public void setLastWorn(Boolean lastWorn) { this.lastWorn = lastWorn; }
+    public void setReleasedPermanently(boolean releasedPermanently) { this.releasedPermanently = releasedPermanently; }
+    public void setReleasedAt(Instant releasedAt) { this.releasedAt = releasedAt; }
+    public void setReleaseCertificateNo(String releaseCertificateNo) { this.releaseCertificateNo = releaseCertificateNo; }
 }

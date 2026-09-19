@@ -16,7 +16,8 @@ public record DashboardView(
         List<OfficeFunnel> offices,
         List<DueTodayItem> todayDue,
         List<RedDotItem> redDots,
-        long redDotTotal) {
+        long redDotTotal,
+        long disposalPending) {
 
     /** 单个司法所漏斗：入矫→在矫（含请假、训诫两个在矫子态）→ 解除，收监单列 */
     public record OfficeFunnel(Long officeId, String officeName, String region, String timezone,

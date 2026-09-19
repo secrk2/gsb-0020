@@ -37,6 +37,12 @@ public class DataInitializer implements ApplicationRunner {
     private static final Logger log = LoggerFactory.getLogger(DataInitializer.class);
     private static final ZoneId SH = ZoneId.of("Asia/Shanghai");
 
+    /** 种子处置单/评估单业务编号的顺序计数（确定性，不使用随机数） */
+    private int seedSeq = 1;
+    /** 本次播种的基准时刻/日期（辅助方法复用） */
+    private Instant now;
+    private LocalDate today;
+
     private final JudicialOfficeRepository officeRepository;
     private final CorrectionObjectRepository objectRepository;
     private final UserAccountRepository userRepository;
@@ -47,6 +53,10 @@ public class DataInitializer implements ApplicationRunner {
     private final GeoFenceRepository fenceRepository;
     private final FenceScheduleRepository scheduleRepository;
     private final MonitorActionRepository monitorActionRepository;
+    private final DisposalRecordRepository disposalRepository;
+    private final DisposalActionLogRepository disposalLogRepository;
+    private final ReleaseAssessmentRepository assessmentRepository;
+    private final ReleaseActionLogRepository releaseLogRepository;
     private final PasswordEncoder passwordEncoder;
     private final ObjectMapper objectMapper;
 
@@ -60,6 +70,10 @@ public class DataInitializer implements ApplicationRunner {
                            GeoFenceRepository fenceRepository,
                            FenceScheduleRepository scheduleRepository,
                            MonitorActionRepository monitorActionRepository,
+                           DisposalRecordRepository disposalRepository,
+                           DisposalActionLogRepository disposalLogRepository,
+                           ReleaseAssessmentRepository assessmentRepository,
+                           ReleaseActionLogRepository releaseLogRepository,
                            PasswordEncoder passwordEncoder,
                            ObjectMapper objectMapper) {
         this.officeRepository = officeRepository;
@@ -72,6 +86,10 @@ public class DataInitializer implements ApplicationRunner {
         this.fenceRepository = fenceRepository;
         this.scheduleRepository = scheduleRepository;
         this.monitorActionRepository = monitorActionRepository;
+        this.disposalRepository = disposalRepository;
+        this.disposalLogRepository = disposalLogRepository;
+        this.assessmentRepository = assessmentRepository;
+        this.releaseLogRepository = releaseLogRepository;
         this.passwordEncoder = passwordEncoder;
         this.objectMapper = objectMapper;
     }
@@ -84,9 +102,9 @@ public class DataInitializer implements ApplicationRunner {
             return;
         }
 
-        LocalDate today = LocalDate.now(SH);
+        today = LocalDate.now(SH);
         String todayWeek = today.getDayOfWeek().toString();
-        Instant now = Instant.now();
+        now = Instant.now();
 
         // ---------- 司法所（跨时区：伊宁所 UTC+6，验证按对象时区判/显） ----------
         JudicialOffice chengguan = officeRepository.save(new JudicialOffice(
@@ -156,6 +174,14 @@ public class DataInitializer implements ApplicationRunner {
         seeds.add(new SeedObj("JWT26013", "买买提·阿卜拉", yining, CorrectionStatus.SERVING,
                 "TUESDAY", "危险驾驶罪", today.minusMonths(2), today.plusMonths(10)));
 
+        // 矫正将满（15 天后到期）的在矫对象：进入“解除与评估”到期清单，预置一份评估草稿
+        seeds.add(new SeedObj("JWT26014", "孙德旺", chengguan, CorrectionStatus.SERVING,
+                "THURSDAY", "交通肇事罪", today.minusMonths(11).plusDays(15), today.plusDays(15)));
+
+        // 矫正 6 天后到期的在矫对象：评估已审批通过、待宣告解除
+        seeds.add(new SeedObj("JWT26015", "郑解放", longhu, CorrectionStatus.SERVING,
+                "MONDAY", "故意伤害罪（轻伤）", today.minusYears(1).plusDays(6), today.plusDays(6)));
+
         List<CorrectionObject> objs = new ArrayList<>();
         for (SeedObj s : seeds) {
             CorrectionObject o = new CorrectionObject();
@@ -173,6 +199,18 @@ public class DataInitializer implements ApplicationRunner {
             o.setIdCardTail("****" + String.format("%04X", Math.floorMod(s.no().hashCode(), 0x10000)));
             objs.add(objectRepository.save(o));
             emitPath(o, s.status());
+
+            // 已解除终态：补永久标记与解除证明书，冻结定位（历史终态归档样本）
+            if (s.status() == CorrectionStatus.RELEASED) {
+                o.setReleasedPermanently(true);
+                Instant releasedAt = s.end() == null ? now
+                        : s.end().atTime(10, 0).atZone(SH).toInstant();
+                o.setReleasedAt(releasedAt);
+                String day = releasedAt.atZone(ZoneId.of(o.getOffice().getTimezone()))
+                        .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd"));
+                o.setReleaseCertificateNo("JC-" + s.no() + "-" + day);
+                objectRepository.save(o);
+            }
         }
 
         CorrectionObject zhang = objs.get(0);
@@ -183,6 +221,7 @@ public class DataInitializer implements ApplicationRunner {
         CorrectionObject xu = objs.get(10);
         CorrectionObject sun = objs.get(11);
         CorrectionObject mait = objs.get(12);
+        CorrectionObject sundew = objs.get(13);
 
         // ---------- 30 天稀疏历史轨迹（周/月视图有线可看） ----------
         emitHistory(chen, qingshan.getCenterLat(), qingshan.getCenterLng(), "seed-chen-hist", 0.0020);
@@ -277,13 +316,77 @@ public class DataInitializer implements ApplicationRunner {
                 "对象 C-JWT26005 定位越出「青山乡规定活动范围」多边形围栏，最近定位时间（Asia/Shanghai）"
                         + ZonedDateTime.ofInstant(breachT, SH).toLocalDateTime() + "，末三点为离线补传",
                 now.minusSeconds(10)));
-        violationRepository.save(new ViolationEvent(zhou, "FORBIDDEN_ZONE",
-                "对象 Z-JWT26009 定位进入「龙湖废弃码头（全天禁入）」禁区，最近定位时间（Asia/Shanghai）"
-                        + ZonedDateTime.ofInstant(now.minusSeconds(15), SH).toLocalDateTime(),
-                now.minusSeconds(12)));
+        // 周文斌禁区事件在下方“违规处置样本”中创建并登记为待处置单
         violationRepository.save(new ViolationEvent(objs.get(2), "ADMONISH",
                 "对象 L-JWT26003 因本周两次未按规定时间报到，被予以训诫",
                 today.minusDays(1).atTime(15, 30).atZone(SH).toInstant()));
+
+        // ---------- 违规处置单样本（登记→训诫/收监、驳回、撤销，全程留痕） ----------
+        // 周文斌禁区事件：登记为“待处置”处置单（红点受理后转入处置中心，时间窗内同事由只此一单）
+        ViolationEvent zhouForbidden = new ViolationEvent(zhou, "FORBIDDEN_ZONE",
+                "对象 Z-JWT26009 定位进入「龙湖废弃码头（全天禁入）」禁区，最近定位时间（Asia/Shanghai）"
+                        + ZonedDateTime.ofInstant(now.minusSeconds(15), SH).toLocalDateTime(),
+                now.minusSeconds(12));
+        DisposalRecord zhouCase = newDisposal("CC", zhou, DisposalCategory.FORBIDDEN_ZONE,
+                DisposalStatus.REGISTERED, "AUTO", "周文斌·禁区闯入违规处置",
+                "禁行时段进入龙湖废弃码头禁区，待约谈核查", 0L, "韩雪梅",
+                "监控发现禁区闯入，登记受理", now.minusSeconds(12));
+        attachEvent(zhouCase, zhouForbidden);
+        disposalLogRepository.save(new DisposalActionLog(zhouCase.getId(), "REGISTER",
+                DisposalStatus.REGISTERED, 0L, "韩雪梅", "监控发现禁区闯入，登记受理",
+                "由 1 条红点事件登记受理（来源：事件合成）"));
+
+        // 李志强：历史训诫处置（已办结，档案处于训诫态）
+        CorrectionObject li = objs.get(2);
+        DisposalRecord liCase = newDisposal("CC", li, DisposalCategory.ABSENT,
+                DisposalStatus.ADMONISHED, "MANUAL", "李志强·屡次未报到违规处置",
+                "本周两次未按规定时间报到，谈话后仍改正不及时", 0L, "李建国",
+                "当面核查发现屡次未报到", today.minusDays(1).atTime(14, 0).atZone(SH).toInstant());
+        liCase.setResolvedAt(today.minusDays(1).atTime(15, 30).atZone(SH).toInstant());
+        disposalRepository.save(liCase);
+        disposalLogRepository.save(new DisposalActionLog(liCase.getId(), "REGISTER",
+                DisposalStatus.REGISTERED, 0L, "李建国", "当面核查发现屡次未报到", "手工登记受理"));
+        disposalLogRepository.save(new DisposalActionLog(liCase.getId(), "ADMONISH",
+                DisposalStatus.ADMONISHED, 0L, "李建国", "违反监管规定，予以训诫，责令书面检讨",
+                "已联动档案状态变更为「训诫」"));
+
+        // 张伟国：登记后经查不构成违规，驳回办结（原红点确认为无效并核销）
+        DisposalRecord zhangCase = newDisposal("CC", zhang, DisposalCategory.GEOFENCE_BREACH,
+                DisposalStatus.REJECTED, "MANUAL", "张伟国·疑似越界核查处置",
+                "系统短暂提示越界，经电话核查与定位复核", 0L, "李建国",
+                "监控提示疑似越界，登记核查", today.minusDays(2).atTime(9, 20).atZone(SH).toInstant());
+        zhangCase.setResolvedAt(today.minusDays(2).atTime(10, 5).atZone(SH).toInstant());
+        disposalRepository.save(zhangCase);
+        disposalLogRepository.save(new DisposalActionLog(zhangCase.getId(), "REGISTER",
+                DisposalStatus.REGISTERED, 0L, "李建国", "监控提示疑似越界，登记核查", "手工登记受理"));
+        disposalLogRepository.save(new DisposalActionLog(zhangCase.getId(), "REJECT",
+                DisposalStatus.REJECTED, 0L, "李建国",
+                "经核查系设备 GPS 漂移导致，对象当日在规定活动范围内，不构成越界违规",
+                "经查不构成违规，驳回处置，核销红点 0 条"));
+
+        // 杨春生：登记有误，撤销办结（原红点退回作战台）
+        DisposalRecord yangCase = newDisposal("CC", yang, DisposalCategory.OTHER,
+                DisposalStatus.REVOKED, "MANUAL", "杨春生·群众反映情况处置",
+                "群众反映其夜间外出，登记后发现反映对象有误", 0L, "罗建军",
+                "接到群众反映先登记", today.minusDays(3).atTime(19, 0).atZone(SH).toInstant());
+        yangCase.setResolvedAt(today.minusDays(3).atTime(20, 30).atZone(SH).toInstant());
+        disposalRepository.save(yangCase);
+        disposalLogRepository.save(new DisposalActionLog(yangCase.getId(), "REGISTER",
+                DisposalStatus.REGISTERED, 0L, "罗建军", "接到群众反映先登记", "手工登记受理"));
+        disposalLogRepository.save(new DisposalActionLog(yangCase.getId(), "REVOKE",
+                DisposalStatus.REVOKED, 0L, "罗建军",
+                "经核实系同名人员，反映情况与本对象无关，登记有误予以撤销",
+                "登记有误，撤销处置单"));
+
+        // ---------- 解除与评估样本 ----------
+        // 孙德旺（15 天后到期）：已生成评估报告草稿
+        seedAssessment(sundew, ReleaseStage.DRAFT, null, today);
+        // 赵敏（已解除）：完整走完 草稿→提交→审批→宣告解除，带永久标记与证明书
+        CorrectionObject zhao = objs.get(3);
+        seedReleasedAssessment(zhao, today);
+        // 郑解放（6 天后到期）：评估已审批通过，待宣告解除
+        CorrectionObject zheng = objs.get(14);
+        seedAssessment(zheng, ReleaseStage.APPROVED, null, today);
 
         // ---------- 账号 ----------
         createAccount("jiandu", "陈督导", Role.SUPERVISOR, null, null);
@@ -293,7 +396,7 @@ public class DataInitializer implements ApplicationRunner {
         createAccount("ganyining", "古丽娜尔", Role.STAFF, yining, null);
 
         String[] objUsers = {"obj1", "obj2", "obj3", null, "obj4", "obj5", null, null,
-                "obj6", "obj7", "obj8", "obj9", "obj10"};
+                "obj6", "obj7", "obj8", "obj9", "obj10", "obj11", "obj12"};
         for (int i = 0; i < objs.size(); i++) {
             if (objUsers[i] != null) {
                 createAccount(objUsers[i], objs.get(i).getFullName(), Role.OFFENDER,
@@ -388,6 +491,123 @@ public class DataInitializer implements ApplicationRunner {
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    // ---------------- 违规处置 / 解除评估 种子辅助 ----------------
+
+    private DisposalRecord newDisposal(String prefix, CorrectionObject o, DisposalCategory category,
+                                       DisposalStatus status, String source, String title, String detail,
+                                       Long op, String opName, String reason, Instant registeredAt) {
+        DisposalRecord r = new DisposalRecord();
+        r.setDisposalNo(seedNo(prefix, o));
+        r.setOffender(o);
+        r.setCategory(category);
+        r.setStatus(status);
+        r.setSource(source);
+        r.setTitle(title);
+        r.setDetail(detail);
+        r.setRegisteredBy(op);
+        r.setRegisteredByName(opName);
+        r.setRegisterReason(reason);
+        r.setRegisteredAt(registeredAt);
+        r.setEventCount(0);
+        return disposalRepository.save(r);
+    }
+
+    /** 把红点事件挂到处置单并核销，更新单上事件时间范围与计数。 */
+    private void attachEvent(DisposalRecord r, ViolationEvent e) {
+        violationRepository.save(e);
+        e.setDisposal(r);
+        e.setReadFlag(true);
+        violationRepository.save(e);
+        r.setEventCount(1);
+        r.setFirstEventAt(e.getEventTime());
+        r.setLastEventAt(e.getEventTime());
+        disposalRepository.save(r);
+    }
+
+    /** 草稿 / 审批通过待宣告 两种在途评估样本。 */
+    private void seedAssessment(CorrectionObject o, ReleaseStage stage, String opinion, LocalDate today) {
+        ReleaseAssessment a = new ReleaseAssessment();
+        a.setAssessmentNo(seedNo("PG", o));
+        a.setOffender(o);
+        a.setStage(stage);
+        a.setEndDate(o.getEndDate());
+        a.setScore(stage == ReleaseStage.DRAFT ? 86 : 90);
+        a.setEducation("矫正期内按要求参加法治教育与社区服务，出勤率良好。");
+        a.setCompliance("近 30 天按规定报到节点完成，定位在活动范围内，无未处置违规。");
+        a.setRepentance("认罪悔罪态度诚恳，思想稳定，能定期提交思想汇报。");
+        a.setRiskLevel("LOW");
+        a.setConclusion("综合考核 " + (stage == ReleaseStage.DRAFT ? 86 : 90)
+                + " 分，再犯罪风险低，建议矫正期满按期解除。");
+        Instant assessed = today.minusDays(stage == ReleaseStage.DRAFT ? 1 : 6)
+                .atTime(9, 30).atZone(SH).toInstant();
+        a.setAssessorName(stage == ReleaseStage.APPROVED ? "韩雪梅" : "李建国");
+        a.setAssessedAt(assessed);
+        if (stage == ReleaseStage.APPROVED) {
+            a.setSubmittedBy(0L);
+            a.setSubmittedByName("韩雪梅");
+            a.setSubmittedAt(today.minusDays(5).atTime(10, 0).atZone(SH).toInstant());
+            a.setApprovedBy(0L);
+            a.setApprovedByName("陈督导");
+            a.setApprovedAt(today.minusDays(2).atTime(15, 0).atZone(SH).toInstant());
+            a.setApprovalOpinion(opinion == null ? "考核合格、风险低，同意按期解除，请按期宣告。" : opinion);
+        }
+        assessmentRepository.save(a);
+        releaseLogRepository.save(new ReleaseActionLog(a.getId(), "DRAFT", ReleaseStage.DRAFT,
+                0L, stage == ReleaseStage.APPROVED ? "韩雪梅" : "李建国",
+                "矫正期满生成解除矫正评估报告", "自动带入近 30 天报到双口径作为初稿"));
+        if (stage == ReleaseStage.APPROVED) {
+            releaseLogRepository.save(new ReleaseActionLog(a.getId(), "SUBMIT", ReleaseStage.SUBMITTED,
+                    0L, "韩雪梅", "评估完成，提交审批", "提交解除矫正审批"));
+            releaseLogRepository.save(new ReleaseActionLog(a.getId(), "APPROVE", ReleaseStage.APPROVED,
+                    0L, "陈督导", "考核合格、风险低，同意按期解除，请按期宣告", "审批通过，可宣告解除"));
+        }
+    }
+
+    /** 已解除对象的完整解除评估留痕（草稿→提交→审批→宣告）。 */
+    private void seedReleasedAssessment(CorrectionObject o, LocalDate today) {
+        ReleaseAssessment a = new ReleaseAssessment();
+        a.setAssessmentNo(seedNo("PG", o));
+        a.setOffender(o);
+        a.setStage(ReleaseStage.DECLARED);
+        a.setEndDate(o.getEndDate());
+        a.setScore(88);
+        a.setEducation("矫正期内完成全部法治教育与社区服务课时。");
+        a.setCompliance("报到、定位合规，无未处置违规记录。");
+        a.setRepentance("认罪悔罪，思想稳定，融入社会情况良好。");
+        a.setRiskLevel("LOW");
+        a.setConclusion("综合考核 88 分，再犯罪风险低，矫正期满依法按期解除。");
+        Instant declared = o.getReleasedAt() == null ? now : o.getReleasedAt();
+        a.setAssessorName("李建国");
+        a.setAssessedAt(declared.minusSeconds(7 * 86400L));
+        a.setSubmittedBy(0L);
+        a.setSubmittedByName("李建国");
+        a.setSubmittedAt(declared.minusSeconds(5 * 86400L));
+        a.setApprovedBy(0L);
+        a.setApprovedByName("陈督导");
+        a.setApprovedAt(declared.minusSeconds(2 * 86400L));
+        a.setApprovalOpinion("同意按期解除。");
+        a.setDeclaredBy(0L);
+        a.setDeclaredByName("李建国");
+        a.setDeclaredAt(declared);
+        a.setCertificateNo(o.getReleaseCertificateNo());
+        assessmentRepository.save(a);
+        releaseLogRepository.save(new ReleaseActionLog(a.getId(), "DRAFT", ReleaseStage.DRAFT,
+                0L, "李建国", "矫正期满生成解除矫正评估报告", "自动带入近 30 天报到双口径作为初稿"));
+        releaseLogRepository.save(new ReleaseActionLog(a.getId(), "SUBMIT", ReleaseStage.SUBMITTED,
+                0L, "李建国", "评估完成，提交审批", "提交解除矫正审批"));
+        releaseLogRepository.save(new ReleaseActionLog(a.getId(), "APPROVE", ReleaseStage.APPROVED,
+                0L, "陈督导", "同意按期解除。", "审批通过，可宣告解除"));
+        releaseLogRepository.save(new ReleaseActionLog(a.getId(), "DECLARE", ReleaseStage.DECLARED,
+                0L, "李建国", "矫正期满，依法宣告解除社区矫正",
+                "已宣告解除并打永久标记，签发解除证明书 " + o.getReleaseCertificateNo()));
+    }
+
+    private String seedNo(String prefix, CorrectionObject o) {
+        ZoneId zone = ZoneId.of(o.getOffice().getTimezone());
+        String day = now.atZone(zone).format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd"));
+        return prefix + "-" + day + "-" + String.format("%04d", seedSeq++);
     }
 
     private void emitPath(CorrectionObject o, CorrectionStatus target) {

@@ -135,12 +135,33 @@ docker compose down -v && docker compose up -d --build
 
 ### 6. 作战台
 
-- 顶部 4 个指标：监外执行中、建档总数、今日应报到、未处置红点
+- 顶部 5 个指标：监外执行中、建档总数、今日应报到、未处置红点、**待处置案件（点击直达违规处置中心）**
 - 全区漏斗：入矫登记/在矫/请假外出/训诫/收监/解除（在矫口径 = 在矫+请假+训诫）
 - 各司法所分段漏斗条（悬停看各状态人数）+ 完整图例（颜色不单独承载语义）
-- 今日应报到：已报到 / 待报到 / 逾时未报（按对象所在司法所时区的当地 18:00 判定）
-- 红点：越界 / 未报到 / 训诫，点击直达档案
+- 今日应报到：已报到 / 待报到 / 逾时未报（按对象所在司法所时区的当地 18:00 判定；每 10 分钟自动生成未报到红点）
+- 红点：越界 / 禁区 / 未报到 / 训诫，点击直达档案
 - 响应式适配三档：**1440 桌面**（侧栏+双列）、**1024 平板**（图标侧栏）、**390 手机**（底部导航、表格转卡片）
+
+### 7. 违规处置
+
+左侧「⚖️ 违规处置」菜单进入。把越界、禁区闯入、未报到这类**红点事件**“登记受理”为可处置的处置单：
+
+- **登记后走训诫或收监**：登记（REGISTERED）→ 训诫（ADMONISHED）/ 收监（REIMPRISONED），训诫、收监会**联动档案状态机**（非法去向返回 409 并说明原因），写 `status_transition` 与 `disposal_action_log` 双留痕
+- **能驳回也能撤销**：驳回（REJECTED，经查不构成违规，红点核销）；撤销（REVOKED，登记有误，红点退回作战台待重新处置）
+- **每一步谁做的、因为什么都留痕**：登记/训诫/收监/驳回/撤销每步记录操作人、理由、结论，理由不少于 4 字；处置单日志只追加
+- **不许直接改结论**：处置结论只能沿 `DisposalStateMachine` 推进，训诫/收监一经执行即终结，不能在处置单上撤销或改判；训诫后恢复在矫走档案的「教育改正·恢复在矫」
+- **同一对象同一事由一个时间窗只合成一条**：合并键 = 对象 + 事由（越界/禁区/未报到/其他），`12 小时`窗内已有“待处置”单则事件并入、不新开红点/新单，避免一晚上刷出七八条；事件生成统一走 `ViolationEventService`（未挂单红点边沿去重 + 时间窗合并）
+- 也支持无红点时**手工登记**（群众举报、当面核查）
+
+### 8. 解除与评估
+
+左侧「📭 解除与评估」菜单进入：
+
+- **到期清单**：在管对象矫正期满前 30 天（按对象司法所时区的日历日）进入待办，含是否已在评估流程
+- **先出评估报告**：为到期对象生成报告，自动带入近 30 天打卡天数/关键报到**双口径**与初步评分、风险等级，制作人可补全教育/监管/悔罪情况
+- **走完解除状态机**：草稿 DRAFT → 提交 SUBMITTED → 审批（通过 APPROVED / 退回补正 REJECTED，可重新提交）→ 宣告解除 DECLARED；每步写 `release_action_log`（操作人、意见、时间）
+- **宣告后打永久标记**：`releasedPermanently=true`（不可逆）+ 签发解除证明书编号，联动档案进入「解除」终态
+- **解除之后**：不再出现在在矫名单（默认在管名单排除终态）与作战台红点（终态流转时核销、查询再防御性过滤）；**位置数据不再实时更新**（腕表上报/报到对终态对象冻结，实时位置清空）；**档案仍可按矫正编号检索或按状态筛选查到**（归档），详情展示永久解除标记、证明书与冻结提示
 
 ## 目录结构
 
@@ -194,3 +215,22 @@ cd frontend/html && python3 -m http.server 8104   # 此时 API 直连 7104（已
 | GET | `/api/monitor/objects/{id}/actions` | 清除/核实操作留痕 |
 | POST | `/api/offender/tracks` | 腕表轨迹批量上报（UTC、幂等/合并/时效/漂移过滤/禁区判定） |
 | POST | `/api/offender/check-in` | 日常报到（UTC 定位时效校验，按所时区记日报到） |
+| GET | `/api/disposals?status=&objectId=` | 违规处置单列表（默认待处置，可过滤/按对象） |
+| GET | `/api/disposals/open-events` | 待登记受理红点 |
+| GET | `/api/disposals/pending-count` | 待处置案件数（作战台角标） |
+| GET | `/api/disposals/{id}` | 处置单详情 + 合并事件 + 逐步留痕 |
+| POST | `/api/disposals/from-events` | 红点登记为处置单（12h 窗同对象同事由并入同一单） |
+| POST | `/api/disposals/manual` | 手工登记处置单 |
+| POST | `/api/disposals/{id}/admonish` | 予以训诫（联动档案→训诫，必填理由） |
+| POST | `/api/disposals/{id}/reimprison` | 提请收监（联动档案→收监终态，必填理由） |
+| POST | `/api/disposals/{id}/reject` | 驳回（不构成违规，红点核销，必填理由） |
+| POST | `/api/disposals/{id}/revoke` | 撤销（登记有误，红点退回，必填理由） |
+| GET | `/api/release/due` | 矫正到期清单（含评估流程状态） |
+| POST | `/api/release/assessments` | 到期对象生成解除评估报告（自动带双口径） |
+| GET | `/api/release/assessments/{id}` | 评估报告详情 + 考核双口径 + 留痕 |
+| PUT | `/api/release/assessments/{id}` | 保存/补正报告内容 |
+| POST | `/api/release/assessments/{id}/submit` | 提交审批 |
+| POST | `/api/release/assessments/{id}/approve` | 审批通过（必填意见） |
+| POST | `/api/release/assessments/{id}/return` | 退回补正（必填意见） |
+| POST | `/api/release/assessments/{id}/declare` | 宣告解除（永久标记/冻结定位/退红点，必填意见） |
+| GET | `/api/release/objects/{id}/latest` | 按对象取最新解除评估（档案页入口） |

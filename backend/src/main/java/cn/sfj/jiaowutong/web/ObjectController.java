@@ -28,12 +28,14 @@ public class ObjectController {
         this.objectService = objectService;
     }
 
-    /** 档案列表：默认脱敏，支持状态/司法所过滤（监管员可切所） */
+    /** 档案列表：默认脱敏，支持状态/司法所/编号关键词过滤（监管员可切所）。
+     *  默认在管名单不含已解除归档对象；按矫正编号关键词检索时可跨状态查到其档案。 */
     @GetMapping
     public ApiResult<List<ObjectView>> list(@RequestParam(required = false) CorrectionStatus status,
-                                            @RequestParam(required = false) Long officeId) {
+                                            @RequestParam(required = false) Long officeId,
+                                            @RequestParam(required = false) String keyword) {
         LoginUser user = CurrentUserHolder.require();
-        return ApiResult.success(objectService.list(status, officeId, user));
+        return ApiResult.success(objectService.list(status, officeId, keyword, user));
     }
 
     /** 档案详情：越权访问返回 403 错误态，不返回空白 */

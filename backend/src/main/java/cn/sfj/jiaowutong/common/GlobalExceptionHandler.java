@@ -21,6 +21,8 @@ public class GlobalExceptionHandler {
             "FORBIDDEN", HttpStatus.FORBIDDEN,
             "NOT_FOUND", HttpStatus.NOT_FOUND,
             "INVALID_TRANSITION", HttpStatus.CONFLICT,
+            "DISPOSAL_TRANSITION", HttpStatus.CONFLICT,
+            "RELEASE_TRANSITION", HttpStatus.CONFLICT,
             "STALE_LOCATION", HttpStatus.UNPROCESSABLE_ENTITY,
             "VALIDATION_ERROR", HttpStatus.BAD_REQUEST
     );

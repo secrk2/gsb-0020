@@ -21,6 +21,7 @@ public class ObjectService {
     private final StatusTransitionRepository transitionRepository;
     private final NameViewAuditRepository nameAuditRepository;
     private final ViolationEventRepository violationRepository;
+    private final ViolationEventService violationEventService;
     private final TrackPointRepository trackPointRepository;
     private final CheckInRepository checkInRepository;
     private final AccessControlService accessControl;
@@ -29,6 +30,7 @@ public class ObjectService {
                          StatusTransitionRepository transitionRepository,
                          NameViewAuditRepository nameAuditRepository,
                          ViolationEventRepository violationRepository,
+                         ViolationEventService violationEventService,
                          TrackPointRepository trackPointRepository,
                          CheckInRepository checkInRepository,
                          AccessControlService accessControl) {
@@ -36,17 +38,34 @@ public class ObjectService {
         this.transitionRepository = transitionRepository;
         this.nameAuditRepository = nameAuditRepository;
         this.violationRepository = violationRepository;
+        this.violationEventService = violationEventService;
         this.trackPointRepository = trackPointRepository;
         this.checkInRepository = checkInRepository;
         this.accessControl = accessControl;
     }
 
     @Transactional(readOnly = true)
-    public List<ObjectView> list(CorrectionStatus status, Long officeId, LoginUser user) {
-        List<CorrectionObject> all = objectRepository.findAll();
-        return accessControl.filterByScope(all, user).stream()
+    public List<ObjectView> list(CorrectionStatus status, Long officeId, String keyword, LoginUser user) {
+        List<CorrectionObject> scoped = accessControl.filterByScope(objectRepository.findAll(), user);
+        boolean searching = keyword != null && !keyword.isBlank();
+        return scoped.stream()
                 .filter(o -> status == null || o.getStatus() == status)
                 .filter(o -> officeId == null || officeId.equals(o.getOffice().getId()))
+                .filter(o -> {
+                    // 默认“在管名单”不含终态（已解除/已收监）；
+                    // 显式状态过滤（可筛解除/收监）或按编号关键词检索时可跨状态找到归档档案。
+                    if (searching || status != null) {
+                        return true;
+                    }
+                    return o.getStatus() != CorrectionStatus.RELEASED
+                            && o.getStatus() != CorrectionStatus.REIMPRISONED;
+                })
+                .filter(o -> {
+                    if (!searching) return true;
+                    String kw = keyword.trim().toUpperCase();
+                    return (o.getCorrectionNo() != null && o.getCorrectionNo().toUpperCase().contains(kw))
+                            || (o.getMaskedName() != null && o.getMaskedName().toUpperCase().contains(kw));
+                })
                 .sorted(Comparator.comparing(CorrectionObject::getCorrectionNo))
                 .map(o -> ObjectView.of(o, isSelfOffender(o, user)))
                 .toList();
@@ -109,23 +128,59 @@ public class ObjectService {
     public TransitionView transition(Long id, CorrectionStatus target, String reason, LoginUser user) {
         accessControl.assertStaffOrSupervisor(user);
         CorrectionObject o = accessControl.loadVisible(id, user);
+        return applyTransition(o, target, reason, user.userId(), user.realName(), null);
+    }
+
+    /**
+     * 档案状态机推进的唯一实现：校验合法去向、改状态、写 status_transition 留痕，
+     * 训诫同步产生违规红点。供控制器与违规处置流程（训诫/收监联动）复用，
+     * 避免两处各写一套状态变更逻辑导致留痕口径不一致。
+     *
+     * @param linkedSource 由处置单联动时传入处置单编号，写入留痕备注；普通档案流转为 null。
+     */
+    @Transactional
+    public TransitionView applyTransition(CorrectionObject o, CorrectionStatus target, String reason,
+                                          Long operatorId, String operatorName, String linkedSource) {
         CorrectionStatus from = o.getStatus();
         CorrectionStateMachine.assertTransition(from, target);
 
         o.setStatus(target);
-        objectRepository.save(o);
-        transitionRepository.save(new StatusTransition(
-                id, from, target, user.userId(), user.realName(), reason));
 
-        // 训诫本身是处置措施，同步生成一条违规处置红点
+        // 终态不变量：无论从档案页还是处置/解除流程进入「解除/收监」，都统一
+        // 打永久标记（解除）、冻结实时定位、关闭在办红点，杜绝两条入口行为不一致。
+        if (target == CorrectionStatus.RELEASED || target == CorrectionStatus.REIMPRISONED) {
+            Instant now = Instant.now();
+            java.time.ZoneId zone = FenceService.safeZone(o.getOffice().getTimezone());
+            o.setLastLocationAt(null);
+            o.setLastLat(null);
+            o.setLastLng(null);
+            o.setLastInsideFence(null);
+            o.setLastForbidden(null);
+            if (target == CorrectionStatus.RELEASED) {
+                o.setReleasedPermanently(true);
+                o.setReleasedAt(now);
+                String day = now.atZone(zone).format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd"));
+                o.setReleaseCertificateNo("JC-" + o.getCorrectionNo() + "-" + day);
+            }
+            violationEventService.closeOpenEventsForOffender(o.getId());
+        }
+
+        objectRepository.save(o);
+        String fullReason = linkedSource == null ? reason
+                : (reason == null || reason.isBlank() ? linkedSource : reason + "（" + linkedSource + "）");
+        transitionRepository.save(new StatusTransition(
+                o.getId(), from, target, operatorId, operatorName, fullReason));
+
+        // 训诫本身是处置措施，同步生成一条违规处置红点（同样走边沿去重，不刷屏）
         if (target == CorrectionStatus.ADMONISHED) {
-            violationRepository.save(new ViolationEvent(o, "ADMONISH",
-                    "对象 " + o.getMaskedName() + " 因违规被训诫" + (reason == null || reason.isBlank() ? "" : "：" + reason),
-                    Instant.now()));
+            violationEventService.emit(o, "ADMONISH",
+                    "对象 " + o.getMaskedName() + " 因违规被训诫"
+                            + (reason == null || reason.isBlank() ? "" : "：" + reason),
+                    Instant.now());
         }
 
         return new TransitionView(from.name(), from.getLabel(),
-                target.name(), target.getLabel(), reason, user.realName(), Instant.now());
+                target.name(), target.getLabel(), fullReason, operatorName, Instant.now());
     }
 
     /** 轨迹回放：仅 ACCEPTED 点；漂移丢弃点不入轨迹，重复补传点本就不入库 */
